@@ -19,6 +19,72 @@ import openpi.transforms as _transforms
 T_co = TypeVar("T_co", covariant=True)
 
 
+def _decode_video_frames_direct_pyav(
+    video_path,
+    timestamps: list[float],
+    tolerance_s: float,
+) -> torch.Tensor:
+    """Decode requested RGB frames with PyAV, without torchvision.VideoReader.
+
+    Recent torchvision releases removed VideoReader, while the LeRobot version
+    pinned by openpi still uses it for its ``pyav`` backend. Keeping this small
+    decoder here also avoids a hard TorchCodec/PyTorch version dependency.
+    """
+    import av
+
+    with av.open(str(video_path)) as container:
+        stream = container.streams.video[0]
+        time_base = float(stream.time_base)
+        first_ts = min(timestamps)
+        last_ts = max(timestamps)
+        container.seek(
+            max(0, int(first_ts / time_base)),
+            stream=stream,
+            backward=True,
+            any_frame=False,
+        )
+
+        loaded_frames: list[torch.Tensor] = []
+        loaded_ts: list[float] = []
+        for frame in container.decode(stream):
+            if frame.pts is None:
+                continue
+            current_ts = float(frame.pts * stream.time_base)
+            loaded_frames.append(torch.from_numpy(frame.to_ndarray(format="rgb24")).permute(2, 0, 1))
+            loaded_ts.append(current_ts)
+            if current_ts >= last_ts:
+                break
+
+    if not loaded_frames:
+        raise RuntimeError(f"PyAV decoded no frames from {video_path}")
+
+    query_ts = torch.as_tensor(timestamps, dtype=torch.float64)
+    decoded_ts = torch.as_tensor(loaded_ts, dtype=torch.float64)
+    distances = torch.abs(query_ts[:, None] - decoded_ts[None, :])
+    min_distances, indices = distances.min(dim=1)
+    if not bool((min_distances < tolerance_s).all()):
+        raise RuntimeError(
+            f"Video timestamps exceed tolerance for {video_path}: "
+            f"max distance={float(min_distances.max()):.6g}s, tolerance={tolerance_s:.6g}s"
+        )
+
+    return torch.stack([loaded_frames[int(index)] for index in indices]).to(dtype=torch.float32).div_(255.0)
+
+
+class _DirectPyAVLeRobotDataset(lerobot_dataset.LeRobotDataset):
+    def _query_videos(
+        self,
+        query_timestamps: dict[str, list[float]],
+        ep_idx: int,
+    ) -> dict[str, torch.Tensor]:
+        item = {}
+        for video_key, timestamps in query_timestamps.items():
+            video_path = self.root / self.meta.get_video_file_path(ep_idx, video_key)
+            frames = _decode_video_frames_direct_pyav(video_path, timestamps, self.tolerance_s)
+            item[video_key] = frames.squeeze(0)
+        return item
+
+
 class Dataset(Protocol[T_co]):
     """Interface for a dataset with random access."""
 
@@ -138,11 +204,17 @@ def create_torch_dataset(
         return FakeDataset(model_config, num_samples=1024)
 
     dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id)
-    dataset = lerobot_dataset.LeRobotDataset(
+    video_backend = os.getenv("OPENPI_VIDEO_BACKEND")
+    dataset_cls = _DirectPyAVLeRobotDataset if video_backend == "pyav" else lerobot_dataset.LeRobotDataset
+    dataset = dataset_cls(
         data_config.repo_id,
         delta_timestamps={
             key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys
         },
+        # TorchCodec wheels are tightly coupled to the installed PyTorch and
+        # FFmpeg builds. OPENPI_VIDEO_BACKEND=pyav selects the direct fallback
+        # above; other values retain LeRobot's native backend handling.
+        video_backend=video_backend,
     )
 
     if data_config.prompt_from_task:

@@ -94,6 +94,20 @@ class Observation(Generic[ArrayT]):
     # Low-dimensional robot state.
     state: at.Float[ArrayT, "*b s"]
 
+    # Optional precomputed route label/score for coarse/fine routing.
+    # Binary labels use {0, 1}; score-based routing uses values in [0, 1].
+    route_label: at.Real[ArrayT, "*b"] | None = None
+    # Optional factorized routing supervision labels in [0, 1].
+    route_label_p: at.Real[ArrayT, "*b"] | None = None
+    route_label_e: at.Real[ArrayT, "*b"] | None = None
+    route_label_p_left: at.Real[ArrayT, "*b"] | None = None
+    route_label_e_left: at.Real[ArrayT, "*b"] | None = None
+    route_label_p_right: at.Real[ArrayT, "*b"] | None = None
+    route_label_e_right: at.Real[ArrayT, "*b"] | None = None
+    route_label_coordination: at.Real[ArrayT, "*b"] | None = None
+    # Optional offline router history actions, shape [*b, T, 7], where T = K * chunk_prefix_steps.
+    router_action_history: at.Real[ArrayT, "*b t d"] | None = None
+
     # Tokenized prompt.
     tokenized_prompt: at.Int[ArrayT, "*b l"] | None = None
     # Tokenized prompt mask.
@@ -122,6 +136,15 @@ class Observation(Generic[ArrayT]):
             images=data["image"],
             image_masks=data["image_mask"],
             state=data["state"],
+            route_label=data.get("route_label"),
+            route_label_p=data.get("route_label_p"),
+            route_label_e=data.get("route_label_e"),
+            route_label_p_left=data.get("route_label_p_left"),
+            route_label_e_left=data.get("route_label_e_left"),
+            route_label_p_right=data.get("route_label_p_right"),
+            route_label_e_right=data.get("route_label_e_right"),
+            route_label_coordination=data.get("route_label_coordination"),
+            router_action_history=data.get("router_action_history"),
             tokenized_prompt=data.get("tokenized_prompt"),
             tokenized_prompt_mask=data.get("tokenized_prompt_mask"),
             token_ar_mask=data.get("token_ar_mask"),
@@ -201,6 +224,15 @@ def preprocess_observation(
         images=out_images,
         image_masks=out_masks,
         state=observation.state,
+        route_label=observation.route_label,
+        route_label_p=observation.route_label_p,
+        route_label_e=observation.route_label_e,
+        route_label_p_left=observation.route_label_p_left,
+        route_label_e_left=observation.route_label_e_left,
+        route_label_p_right=observation.route_label_p_right,
+        route_label_e_right=observation.route_label_e_right,
+        route_label_coordination=observation.route_label_coordination,
+        router_action_history=observation.router_action_history,
         tokenized_prompt=observation.tokenized_prompt,
         tokenized_prompt_mask=observation.tokenized_prompt_mask,
         token_ar_mask=observation.token_ar_mask,
@@ -243,7 +275,63 @@ class BaseModelConfig(abc.ABC):
     def load_pytorch(self, train_config, weight_path: str):
         logger.info(f"train_config: {train_config}")
         model = pi0_pytorch.PI0Pytorch(config=train_config.model)
-        safetensors.torch.load_model(model, weight_path)
+
+        # Be permissive for inference: older checkpoints may contain extra tied-weight
+        # aliases or minor naming/layout differences across transformer versions.
+        state_dict = safetensors.torch.load_file(weight_path)
+        model_state_dict = model.state_dict()
+
+        filtered_state_dict: dict[str, torch.Tensor] = {}
+        skipped_unexpected: list[str] = []
+        skipped_shape_mismatch: list[str] = []
+
+        for key, value in state_dict.items():
+            model_value = model_state_dict.get(key)
+            if model_value is None:
+                skipped_unexpected.append(key)
+                continue
+            if tuple(model_value.shape) != tuple(value.shape):
+                skipped_shape_mismatch.append(key)
+                continue
+            filtered_state_dict[key] = value
+
+        # PaliGemma ties the token embedding to lm_head. Safetensors stores only
+        # one copy of shared tensors, so explicitly restore the omitted alias.
+        tied_embed_key = "paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+        tied_lm_head_key = "paligemma_with_expert.paligemma.lm_head.weight"
+        if tied_embed_key not in filtered_state_dict and tied_lm_head_key in state_dict:
+            tied_value = state_dict[tied_lm_head_key]
+            if tuple(model_state_dict[tied_embed_key].shape) == tuple(tied_value.shape):
+                filtered_state_dict[tied_embed_key] = tied_value
+
+        missing_keys, unexpected_keys = model.load_state_dict(filtered_state_dict, strict=False)
+
+        if skipped_unexpected:
+            logger.warning(
+                "Skipped %d unexpected checkpoint keys while loading PyTorch model. Sample: %s",
+                len(skipped_unexpected),
+                skipped_unexpected[:3],
+            )
+        if skipped_shape_mismatch:
+            logger.warning(
+                "Skipped %d shape-mismatched checkpoint keys while loading PyTorch model. Sample: %s",
+                len(skipped_shape_mismatch),
+                skipped_shape_mismatch[:3],
+            )
+        if missing_keys:
+            logger.warning(
+                "Missing %d model keys after checkpoint load. Sample: %s",
+                len(missing_keys),
+                missing_keys[:3],
+            )
+        if unexpected_keys:
+            logger.warning(
+                "Unexpected %d keys reported by load_state_dict. Sample: %s",
+                len(unexpected_keys),
+                unexpected_keys[:3],
+            )
+
+        del state_dict
         return model
 
     @abc.abstractmethod

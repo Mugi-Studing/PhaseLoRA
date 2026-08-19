@@ -12,6 +12,19 @@ import websockets.frames
 logger = logging.getLogger(__name__)
 
 
+_NOISE_REQUEST_KEYS = ("__openpi_request__", b"__openpi_request__")
+_OBS_KEYS = ("obs", b"obs")
+_NOISE_KEYS = ("noise", b"noise")
+_RESET_REQUEST_KEYS = ("__openpi_reset__", b"__openpi_reset__")
+
+
+def _get_first_present(mapping: dict, keys: tuple[str | bytes, ...], default=None):
+    for key in keys:
+        if key in mapping:
+            return mapping[key]
+    return default
+
+
 class WebsocketPolicyServer:
     """Serves a policy using the websocket protocol. See websocket_client_policy.py for a client implementation.
 
@@ -55,10 +68,26 @@ class WebsocketPolicyServer:
         while True:
             try:
                 start_time = time.monotonic()
-                obs = msgpack_numpy.unpackb(await websocket.recv())
+                payload = msgpack_numpy.unpackb(await websocket.recv())
+
+                noise = None
+                request = _get_first_present(payload, _NOISE_REQUEST_KEYS) if isinstance(payload, dict) else None
+                reset_request = _get_first_present(payload, _RESET_REQUEST_KEYS) if isinstance(payload, dict) else None
+                if reset_request:
+                    self._policy.reset()
+                    await websocket.send(packer.pack({"ok": True}))
+                    continue
+
+                if isinstance(request, dict):
+                    obs = _get_first_present(request, _OBS_KEYS)
+                    noise = _get_first_present(request, _NOISE_KEYS)
+                    if obs is None:
+                        raise KeyError("obs")
+                else:
+                    obs = payload
 
                 infer_time = time.monotonic()
-                action = self._policy.infer(obs)
+                action = self._policy.infer(obs, noise=noise)
                 infer_time = time.monotonic() - infer_time
 
                 action["server_timing"] = {

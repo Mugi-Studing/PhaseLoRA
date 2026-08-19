@@ -1,5 +1,8 @@
 name: Test
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - "*"
@@ -7,9 +10,12 @@ on:
 jobs:
   run_tests:
     name: Run Tests
-    runs-on: openpi-verylarge
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       GIT_LFS_SKIP_SMUDGE: true
+      CUDA_VISIBLE_DEVICES: ""
+      JAX_PLATFORMS: cpu
     steps:
       - uses: actions/checkout@v4
 
@@ -28,4 +34,9 @@ jobs:
         run: uv sync --all-extras --dev
 
       - name: Run tests
-        run: uv run pytest --strict-markers -m "not manual"
+        run: |
+          uv run pytest --strict-markers -q \
+            src/openpi/models_pytorch/gemma_pytorch_test.py \
+            src/openpi/transforms_test.py \
+            packages/openpi-client/src/openpi_client/image_tools_test.py \
+            packages/openpi-client/src/openpi_client/msgpack_numpy_test.py

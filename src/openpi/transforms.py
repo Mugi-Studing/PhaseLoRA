@@ -1,7 +1,9 @@
 from collections.abc import Callable, Mapping, Sequence
 import dataclasses
+import json
+import pathlib
 import re
-from typing import Protocol, TypeAlias, TypeVar, runtime_checkable
+from typing import Any, Protocol, TypeAlias, TypeVar, runtime_checkable
 
 import flax.traverse_util as traverse_util
 import jax
@@ -112,6 +114,229 @@ class InjectDefaultPrompt(DataTransformFn):
 
 
 @dataclasses.dataclass(frozen=True)
+class InjectOfflineCoarseFineLabel(DataTransformFn):
+    """Injects precomputed coarse/fine labels using the sample index.
+
+    The label file can be either:
+    - JSON: {"labels_by_index": {"<index>": <numeric_label_or_score>, ...}}
+    - JSON: {"labels_by_index": {"<index>": {"P": <score>, "E": <score>}, ...}}
+    - JSON: {"<index>": <numeric_label_or_score>, ...}
+    - NPZ: arrays named "index" and "label"
+    """
+
+    label_path: str
+    index_key: str = "index"
+    output_key: str = "route_label"
+    primary_component_key: str = "P"
+    secondary_component_key: str = "E"
+    history_component_key: str = "router_action_history"
+    history_component_fallback_key: str = "H"
+    strict: bool = True
+    only_when_actions_present: bool = True
+    _labels_by_index: dict[int, float | dict[str, Any]] = dataclasses.field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        path = pathlib.Path(self.label_path).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(f"Offline coarse/fine label file not found: {path}")
+
+        suffix = path.suffix.lower()
+        if suffix == ".json":
+            with path.open("r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if isinstance(payload, dict) and "labels_by_index" in payload:
+                payload = payload["labels_by_index"]
+            if not isinstance(payload, dict):
+                raise ValueError(f"Invalid JSON label payload in {path}: expected dict")
+
+            labels_by_index: dict[int, float | dict[str, float]] = {}
+            for k, v in payload.items():
+                idx = int(k)
+                if isinstance(v, dict):
+                    parsed: dict[str, float | list] = {}
+                    for comp_k, comp_v in v.items():
+                        comp_key = str(comp_k)
+                        if isinstance(comp_v, int | float):
+                            parsed[comp_key] = float(comp_v)
+                        else:
+                            parsed[comp_key] = comp_v
+                    labels_by_index[idx] = parsed
+                else:
+                    labels_by_index[idx] = float(v)
+        elif suffix == ".npz":
+            data = np.load(path)
+            if "index" not in data or "label" not in data:
+                raise ValueError(f"Invalid NPZ label payload in {path}: expected arrays 'index' and 'label'")
+            indices = np.asarray(data["index"]).reshape(-1)
+            labels = np.asarray(data["label"]).reshape(-1)
+            labels_by_index = {
+                int(index): float(label)
+                for index, label in zip(indices.tolist(), labels.tolist(), strict=False)
+            }
+        else:
+            raise ValueError(f"Unsupported label file type for {path}; expected .json or .npz")
+
+        object.__setattr__(self, "_labels_by_index", labels_by_index)
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if self.only_when_actions_present and "actions" not in data:
+            return data
+
+        if self.index_key not in data:
+            if self.strict:
+                raise ValueError(f"Cannot inject route label without '{self.index_key}' in sample")
+            return data
+
+        sample_index = int(np.asarray(data[self.index_key]).item())
+        label = self._labels_by_index.get(sample_index)
+        if label is None:
+            if self.strict:
+                raise KeyError(f"No offline route label found for sample index {sample_index}")
+            label = 0.0
+
+        if isinstance(label, dict):
+            out = {**data}
+
+            primary_value = None
+            if self.primary_component_key in label:
+                primary_value = label[self.primary_component_key]
+            elif label:
+                primary_value = next(iter(label.values()))
+            else:
+                primary_value = 0.0
+
+            out[self.output_key] = np.asarray(primary_value, dtype=np.float32)
+
+            if self.primary_component_key in label:
+                out["route_label_p"] = np.asarray(label[self.primary_component_key], dtype=np.float32)
+            if self.secondary_component_key in label:
+                out["route_label_e"] = np.asarray(label[self.secondary_component_key], dtype=np.float32)
+            bimanual_components = {
+                "P_l": "route_label_p_left",
+                "E_l": "route_label_e_left",
+                "P_r": "route_label_p_right",
+                "E_r": "route_label_e_right",
+                "C": "route_label_coordination",
+            }
+            for component_key, output_key in bimanual_components.items():
+                if component_key in label:
+                    out[output_key] = np.asarray(label[component_key], dtype=np.float32)
+
+            history_value = None
+            if self.history_component_key in label:
+                history_value = label[self.history_component_key]
+            elif self.history_component_fallback_key in label:
+                history_value = label[self.history_component_fallback_key]
+            if history_value is not None:
+                out["router_action_history"] = np.asarray(history_value, dtype=np.float32)
+            return out
+
+        return {
+            **data,
+            self.output_key: np.asarray(label, dtype=np.float32),
+        }
+
+
+@dataclasses.dataclass(frozen=True)
+class ConditionDropout(DataTransformFn):
+    prob: float = 0.0
+    drop_prompt: bool = True
+    drop_image: bool = True
+    drop_state: bool = True
+    only_when_actions_present: bool = True
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if self.prob <= 0.0:
+            return data
+        if self.only_when_actions_present and "actions" not in data:
+            return data
+        if np.random.rand() >= self.prob:
+            return data
+
+        if self.drop_prompt and "prompt" in data:
+            data["prompt"] = np.asarray("")
+
+        if self.drop_image and "image" in data:
+            data["image"] = {k: np.zeros_like(v) for k, v in data["image"].items()}
+            if "image_mask" in data:
+                data["image_mask"] = {k: np.zeros((), dtype=np.bool_) for k in data["image_mask"]}
+
+        if self.drop_state and "state" in data:
+            data["state"] = np.zeros_like(data["state"])
+
+        return data
+
+
+@dataclasses.dataclass(frozen=True)
+class FrequencyBlurImages(DataTransformFn):
+    """Applies stochastic frequency-domain low-pass filtering to image inputs.
+
+    This transform keeps low-frequency structure (coarse shape / color blocks) while
+    progressively releasing high-frequency detail as sampled t increases.
+    """
+
+    prob: float = 0.0
+    min_cutoff_ratio: float = 0.08
+    max_cutoff_ratio: float = 1.0
+    only_when_actions_present: bool = True
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if self.prob <= 0.0:
+            return data
+        if "image" not in data:
+            return data
+        if self.only_when_actions_present and "actions" not in data:
+            return data
+        if np.random.rand() >= self.prob:
+            return data
+
+        t = self._extract_t(data)
+        min_ratio = float(np.clip(self.min_cutoff_ratio, 0.0, 1.0))
+        max_ratio = float(np.clip(self.max_cutoff_ratio, min_ratio, 1.0))
+        cutoff_ratio = min_ratio + (max_ratio - min_ratio) * t
+
+        data["image"] = {k: self._lowpass_image(v, cutoff_ratio) for k, v in data["image"].items()}
+        return data
+
+    def _lowpass_image(self, image: np.ndarray, cutoff_ratio: float) -> np.ndarray:
+        x = np.asarray(image)
+        if x.ndim != 3:
+            return x
+
+        h, w = x.shape[0], x.shape[1]
+        radius_limit = 0.5 * min(h, w)
+        cutoff_radius = max(1.0, cutoff_ratio * radius_limit)
+
+        yy, xx = np.ogrid[:h, :w]
+        cy = (h - 1) / 2.0
+        cx = (w - 1) / 2.0
+        radius = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2)
+        mask = radius <= cutoff_radius
+
+        x_float = x.astype(np.float32)
+        filtered = np.empty_like(x_float)
+        for c in range(x.shape[2]):
+            freq = np.fft.fftshift(np.fft.fft2(x_float[..., c]))
+            freq *= mask
+            filtered[..., c] = np.real(np.fft.ifft2(np.fft.ifftshift(freq)))
+
+        if np.issubdtype(x.dtype, np.integer):
+            info = np.iinfo(x.dtype)
+            filtered = np.clip(filtered, info.min, info.max)
+            return filtered.astype(x.dtype)
+        return filtered.astype(x.dtype, copy=False)
+
+    def _extract_t(self, data: DataDict) -> float:
+        # Prefer externally provided diffusion timestep if available.
+        for key in ("t", "timestep", "diffusion_t", "diffusion_timestep"):
+            if key in data:
+                value = np.asarray(data[key])
+                if value.size == 1:
+                    return float(np.clip(value.item(), 0.0, 1.0))
+        return float(np.random.rand())
+
+
+@dataclasses.dataclass(frozen=True)
 class Normalize(DataTransformFn):
     norm_stats: at.PyTree[NormStats] | None
     # If true, will use quantile normalization. Otherwise, normal z-score normalization will be used.
@@ -127,12 +352,34 @@ class Normalize(DataTransformFn):
         if self.norm_stats is None:
             return data
 
-        return apply_tree(
+        out = apply_tree(
             data,
             self.norm_stats,
             self._normalize_quantile if self.use_quantiles else self._normalize,
             strict=self.strict,
         )
+
+        # Keep router history in the same normalized action domain as model actions.
+        # Offline labels store raw executed actions, while inference history is collected
+        # from model outputs before output unnormalization.
+        if "router_action_history" in out:
+            flat_stats = flatten_dict(self.norm_stats)
+            action_stats = None
+            if "actions" in flat_stats:
+                action_stats = flat_stats["actions"]
+            elif "action" in flat_stats:
+                action_stats = flat_stats["action"]
+
+            if action_stats is not None:
+                history = np.asarray(out["router_action_history"])
+                normalized_history = (
+                    self._normalize_quantile(history, action_stats)
+                    if self.use_quantiles
+                    else self._normalize(history, action_stats)
+                )
+                out = {**out, "router_action_history": normalized_history.astype(np.float32, copy=False)}
+
+        return out
 
     def _normalize(self, x, stats: NormStats):
         mean, std = stats.mean[..., : x.shape[-1]], stats.std[..., : x.shape[-1]]

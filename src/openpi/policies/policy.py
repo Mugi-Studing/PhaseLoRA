@@ -109,6 +109,12 @@ class Policy(BasePolicy):
     def metadata(self) -> dict[str, Any]:
         return self._metadata
 
+    @override
+    def reset(self) -> None:
+        reset_fn = getattr(self._model, "reset", None)
+        if callable(reset_fn):
+            reset_fn()
+
 
 class PolicyRecorder(_base_policy.BasePolicy):
     """Records the policy's behavior to disk."""
@@ -133,3 +139,7 @@ class PolicyRecorder(_base_policy.BasePolicy):
 
         np.save(output_path, np.asarray(data))
         return results
+
+    @override
+    def reset(self) -> None:
+        self._policy.reset()

@@ -80,6 +80,30 @@ class LiberoInputs(transforms.DataTransformFn):
         if "prompt" in data:
             inputs["prompt"] = data["prompt"]
 
+        # Optional precomputed routing label/score used by offline coarse/fine supervision.
+        # Binary labels use {0,1}; score labels use [0,1].
+        if "route_label" in data:
+            route_label = data["route_label"]
+            if isinstance(route_label, dict):
+                if "P" in route_label:
+                    inputs["route_label_p"] = np.asarray(route_label["P"], dtype=np.float32)
+                    inputs["route_label"] = np.asarray(route_label["P"], dtype=np.float32)
+                if "E" in route_label:
+                    inputs["route_label_e"] = np.asarray(route_label["E"], dtype=np.float32)
+            else:
+                inputs["route_label"] = np.asarray(route_label, dtype=np.float32)
+
+        if "route_label_p" in data:
+            inputs["route_label_p"] = np.asarray(data["route_label_p"], dtype=np.float32)
+            if "route_label" not in inputs:
+                inputs["route_label"] = np.asarray(data["route_label_p"], dtype=np.float32)
+
+        if "route_label_e" in data:
+            inputs["route_label_e"] = np.asarray(data["route_label_e"], dtype=np.float32)
+
+        if "router_action_history" in data:
+            inputs["router_action_history"] = np.asarray(data["router_action_history"], dtype=np.float32)
+
         return inputs
 
 

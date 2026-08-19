@@ -4,6 +4,42 @@ checkpoints/
 data/
 wandb/
 
+# Local datasets, benchmark forks, and experiment outputs.
+# These directories can be very large and are not part of the open-source
+# training/evaluation code in this repository.
+datasets/
+LIBERO-master/
+LIBERO-plus/
+logs/
+results/
+
+# Local scratch artifacts.
+flow_toy_result*.png
+inference.sh
+get_dataset.py
+toydataset*.py
+run_libero_plus_suites.sh
+scripts/run_libero_plus_suites.sh
+scripts/summarize_libero_plus_categories.py
+examples/libero/eval_apple.py
+examples/libero/visualize_apple_attention.py
+examples/libero/visualize_libero_plus_attention.py
+examples/libero/xt_hijack_test.py
+
+# Dataset-label generation is intentionally kept private for now. Training
+# may consume precomputed labels supplied by the user, but label builders are
+# outside the public repository scope.
+scripts/build_*_labels.py
+
+# One-off local analysis and visualization scripts (not reproducible without
+# private experiment artifacts).
+scripts/analyze_*.py
+scripts/plot_component_contribution_over_time.py
+scripts/serve_attention_policy.py
+scripts/serve_policy_action_focus.py
+scripts/serve_policy_scfg.py
+examples/libero/gradient_sensitivity_analysis.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

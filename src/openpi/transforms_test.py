@@ -119,3 +119,63 @@ def test_extract_prompt_from_task():
 
     with pytest.raises(ValueError, match="task_index=2 not found in task mapping"):
         transform({"task_index": 2})
+
+
+def test_condition_dropout_training_sample():
+    transform = _transforms.ConditionDropout(prob=1.0)
+
+    item = {
+        "prompt": np.asarray("lift block"),
+        "state": np.array([1.0, 2.0], dtype=np.float32),
+        "image": {"base": np.ones((4, 4, 3), dtype=np.uint8)},
+        "image_mask": {"base": np.ones((), dtype=np.bool_)},
+        "actions": np.array([[0.1, 0.2]], dtype=np.float32),
+    }
+
+    out = transform(item)
+    assert out["prompt"].item() == ""
+    assert np.allclose(out["state"], 0.0)
+    assert np.allclose(out["image"]["base"], 0)
+    assert bool(out["image_mask"]["base"]) is False
+
+
+def test_condition_dropout_inference_noop_without_actions():
+    transform = _transforms.ConditionDropout(prob=1.0, only_when_actions_present=True)
+
+    item = {
+        "prompt": np.asarray("lift block"),
+        "state": np.array([1.0, 2.0], dtype=np.float32),
+        "image": {"base": np.ones((4, 4, 3), dtype=np.uint8)},
+    }
+
+    out = transform(item)
+    assert out["prompt"].item() == "lift block"
+    assert np.allclose(out["state"], np.array([1.0, 2.0], dtype=np.float32))
+    assert np.allclose(out["image"]["base"], 1)
+
+
+def test_frequency_blur_training_sample_changes_image():
+    transform = _transforms.FrequencyBlurImages(prob=1.0, min_cutoff_ratio=0.1, max_cutoff_ratio=0.1)
+
+    # High-frequency checkerboard should be smoothed by strong low-pass filtering.
+    checker = np.indices((16, 16)).sum(axis=0) % 2
+    checker = (checker * 255).astype(np.uint8)
+    image = np.stack([checker, checker, checker], axis=-1)
+    item = {
+        "image": {"base": image.copy()},
+        "actions": np.array([[0.1, 0.2]], dtype=np.float32),
+    }
+
+    out = transform(item)
+    assert out["image"]["base"].shape == image.shape
+    assert out["image"]["base"].dtype == image.dtype
+    assert not np.allclose(out["image"]["base"], image)
+
+
+def test_frequency_blur_inference_noop_without_actions():
+    transform = _transforms.FrequencyBlurImages(prob=1.0, only_when_actions_present=True)
+
+    image = np.ones((8, 8, 3), dtype=np.uint8) * 127
+    item = {"image": {"base": image.copy()}}
+    out = transform(item)
+    assert np.allclose(out["image"]["base"], image)

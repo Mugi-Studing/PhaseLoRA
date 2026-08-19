@@ -52,7 +52,28 @@ class Config:
     lora_configs: dict[str, lora.LoRAConfig] = dataclasses.field(default_factory=dict)
 
 
-Variant = Literal["dummy", "gemma_300m", "gemma_300m_lora", "gemma_2b", "gemma_2b_lora"]
+Variant = Literal[
+    "dummy",
+    "gemma_300m",
+    "gemma_300m_lora",
+    "gemma_300m_lora_32",
+    "gemma_300m_lora_96",
+    "gemma_300m_lora_160",
+    "gemma_300m_lora_403",
+    "gemma_300m_lora_244",
+    "gemma_300m_lora_240",
+    "gemma_300m_lora_624",
+    "gemma_300m_lora_1024",
+    "gemma_2b",
+    "gemma_2b_lora",
+    "gemma_2b_lora_16",
+    "gemma_2b_lora_48",
+    "gemma_2b_lora_80",
+    "gemma_2b_lora_122",
+    "gemma_2b_lora_201",
+    "gemma_2b_lora_120",
+    "gemma_2b_lora_512",
+]
 
 
 def get_config(variant: Variant) -> Config:
@@ -93,7 +114,101 @@ def get_config(variant: Variant) -> Config:
             num_heads=8,
             num_kv_heads=1,
             head_dim=256,
-            lora_configs={"attn": lora.LoRAConfig(rank=16, alpha=16.0), "ffn": lora.LoRAConfig(rank=16, alpha=16.0)},
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=180, alpha=180.0),
+                "ffn": lora.LoRAConfig(rank=180, alpha=180.0),
+            },
+        )
+    if variant == "gemma_2b_lora_16":
+        return Config(
+            width=2048,
+            depth=18,
+            mlp_dim=16_384,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=16, alpha=16.0),
+                "ffn": lora.LoRAConfig(rank=16, alpha=16.0),
+            },
+        )
+    if variant == "gemma_2b_lora_48":
+        return Config(
+            width=2048,
+            depth=18,
+            mlp_dim=16_384,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=48, alpha=48.0),
+                "ffn": lora.LoRAConfig(rank=48, alpha=48.0),
+            },
+        )
+    if variant == "gemma_2b_lora_80":
+        return Config(
+            width=2048,
+            depth=18,
+            mlp_dim=16_384,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=80, alpha=80.0),
+                "ffn": lora.LoRAConfig(rank=80, alpha=80.0),
+            },
+        )
+    if variant == "gemma_2b_lora_120":
+        return Config(
+            width=2048,
+            depth=18,
+            mlp_dim=16_384,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=120, alpha=120.0),
+                "ffn": lora.LoRAConfig(rank=120, alpha=120.0),
+            },
+        )
+    if variant == "gemma_2b_lora_122":
+        return Config(
+            width=2048,
+            depth=18,
+            mlp_dim=16_384,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=122, alpha=122.0),
+                "ffn": lora.LoRAConfig(rank=122, alpha=122.0),
+            },
+        )
+    if variant == "gemma_2b_lora_201":
+        return Config(
+            width=2048,
+            depth=18,
+            mlp_dim=16_384,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=201, alpha=201.0),
+                "ffn": lora.LoRAConfig(rank=201, alpha=201.0),
+            },
+        )
+    if variant == "gemma_2b_lora_512":
+        return Config(
+            width=2048,
+            depth=18,
+            mlp_dim=16_384,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=512, alpha=512.0),
+                "ffn": lora.LoRAConfig(rank=512, alpha=512.0),
+            },
         )
     if variant == "gemma_300m_lora":
         # 311M params
@@ -104,7 +219,114 @@ def get_config(variant: Variant) -> Config:
             num_heads=8,
             num_kv_heads=1,
             head_dim=256,
-            lora_configs={"attn": lora.LoRAConfig(rank=32, alpha=32.0), "ffn": lora.LoRAConfig(rank=32, alpha=32.0)},
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=320, alpha=320.0),
+                "ffn": lora.LoRAConfig(rank=320, alpha=320.0),
+            },
+        )
+    if variant == "gemma_300m_lora_32":
+        return Config(
+            width=1024,
+            depth=18,
+            mlp_dim=4096,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=80, alpha=80.0),
+                "ffn": lora.LoRAConfig(rank=80, alpha=80.0),
+            },
+        )
+    if variant == "gemma_300m_lora_96":
+        return Config(
+            width=1024,
+            depth=18,
+            mlp_dim=4096,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=96, alpha=96.0),
+                "ffn": lora.LoRAConfig(rank=96, alpha=96.0),
+            },
+        )
+    if variant == "gemma_300m_lora_160":
+        return Config(
+            width=1024,
+            depth=18,
+            mlp_dim=4096,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=160, alpha=160.0),
+                "ffn": lora.LoRAConfig(rank=160, alpha=160.0),
+            },
+        )
+    if variant == "gemma_300m_lora_240":
+        return Config(
+            width=1024,
+            depth=18,
+            mlp_dim=4096,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=240, alpha=240.0),
+                "ffn": lora.LoRAConfig(rank=240, alpha=240.0),
+            },
+        )
+    if variant == "gemma_300m_lora_244":
+        return Config(
+            width=1024,
+            depth=18,
+            mlp_dim=4096,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=244, alpha=244.0),
+                "ffn": lora.LoRAConfig(rank=244, alpha=244.0),
+            },
+        )
+    if variant == "gemma_300m_lora_403":
+        return Config(
+            width=1024,
+            depth=18,
+            mlp_dim=4096,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=403, alpha=403.0),
+                "ffn": lora.LoRAConfig(rank=403, alpha=403.0),
+            },
+        )
+    if variant == "gemma_300m_lora_624":
+        return Config(
+            width=1024,
+            depth=18,
+            mlp_dim=4096,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=624, alpha=624.0),
+                "ffn": lora.LoRAConfig(rank=624, alpha=624.0),
+            },
+        )
+    if variant == "gemma_300m_lora_1024":
+        return Config(
+            width=1024,
+            depth=18,
+            mlp_dim=4096,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs={
+                "attn": lora.LoRAConfig(rank=1024, alpha=1024.0),
+                "ffn": lora.LoRAConfig(rank=1024, alpha=1024.0),
+            },
         )
     raise ValueError(f"Unknown variant: {variant}")
 

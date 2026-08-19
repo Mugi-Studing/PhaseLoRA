@@ -84,6 +84,35 @@ class AlohaInputs(transforms.DataTransformFn):
         if "prompt" in data:
             inputs["prompt"] = data["prompt"]
 
+        # Preserve dataset identity for offline causal router-label lookup.
+        for key in ("index", "episode_index", "frame_index"):
+            if key in data:
+                inputs[key] = data[key]
+
+        # These fields may already be present in synthetic/debug samples.
+        if "route_label" in data:
+            route_label = data["route_label"]
+            if isinstance(route_label, dict):
+                if "P" in route_label:
+                    inputs["route_label"] = np.asarray(route_label["P"], dtype=np.float32)
+                    inputs["route_label_p"] = np.asarray(route_label["P"], dtype=np.float32)
+                if "E" in route_label:
+                    inputs["route_label_e"] = np.asarray(route_label["E"], dtype=np.float32)
+            else:
+                inputs["route_label"] = np.asarray(route_label, dtype=np.float32)
+        for key in (
+            "route_label_p",
+            "route_label_e",
+            "route_label_p_left",
+            "route_label_e_left",
+            "route_label_p_right",
+            "route_label_e_right",
+            "route_label_coordination",
+            "router_action_history",
+        ):
+            if key in data:
+                inputs[key] = np.asarray(data[key], dtype=np.float32)
+
         return inputs
 
 
