@@ -470,7 +470,31 @@ def prepare_pytorch_checkpoint_for_model(
             else:
                 shape_mismatch_keys.append(target_key)
             continue
+        if target_key.endswith(".base_linear.weight"):
+            module_prefix = target_key.removesuffix(".base_linear.weight")
+            dense_key = f"{module_prefix}.weight"
+            dense_value = state_dict.get(dense_key)
 
+            if dense_value is not None:
+                consumed_source_keys.add(dense_key)
+                if tuple(dense_value.shape) == tuple(target_value.shape):
+                    filtered_state_dict[target_key] = dense_value
+                else:
+                    shape_mismatch_keys.append(dense_key)
+                continue
+
+        if target_key.endswith(".base_linear.bias"):
+            module_prefix = target_key.removesuffix(".base_linear.bias")
+            dense_key = f"{module_prefix}.bias"
+            dense_value = state_dict.get(dense_key)
+
+            if dense_value is not None:
+                consumed_source_keys.add(dense_key)
+                if tuple(dense_value.shape) == tuple(target_value.shape):
+                    filtered_state_dict[target_key] = dense_value
+                else:
+                    shape_mismatch_keys.append(dense_key)
+                continue
         if target_key.endswith(".weight"):
             module_prefix = target_key[: -len(".weight")]
             base_key = f"{module_prefix}.base_linear.weight"
