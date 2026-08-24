@@ -447,12 +447,16 @@ def prepare_pytorch_checkpoint_for_model(
     state_dict: dict[str, torch.Tensor],
     model_state_dict: dict[str, torch.Tensor],
 ) -> tuple[dict[str, torch.Tensor], dict[str, object]]:
-    """Adapt a PyTorch checkpoint to the instantiated model.
+	"""Adapt a PyTorch checkpoint to the instantiated model.
+	
+	This handles both directions between dense Linear and LoRALinear modules:
+	1. LoRALinear checkpoint -> dense model:
+    W_dense = W_base + B @ A.
+    2. Dense checkpoint -> LoRALinear model:
+    load the dense weight into base_linear.weight and leave the newly
+    initialized LoRA A/B parameters unchanged.
 
-    The converted pi05_base checkpoint stores transformer projections as
-    ``LoRALinear(base_linear, lora_a, lora_b)``. Dense full-finetuning configs
-    instead expect a single ``weight`` tensor. OpenPI LoRA variants use
-    ``alpha == rank``, so the equivalent dense weight is ``W + B @ A``.
+    OpenPI LoRA variants use alpha == rank, so the LoRA scaling factor is 1.
     """
     filtered_state_dict: dict[str, torch.Tensor] = {}
     consumed_source_keys: set[str] = set()
